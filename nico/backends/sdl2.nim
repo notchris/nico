@@ -45,6 +45,7 @@ import strutils
 import math
 import random
 
+
 # Types
 
 type
@@ -233,6 +234,60 @@ proc createRecordBuffer(forceClear: bool = false) =
     else:
       recordFrames = newRingBuffer[common.Surface](if fullSpeedGif: recordSeconds * frameRate.int else: recordSeconds * int(frameRate / 2))
 
+proc updateShader* =
+  when defined(opengl):
+    glViewport(0,0,displayWidth,displayHeight)
+
+    glGenVertexArrays(1, quadVAO.addr)
+    glBindVertexArray(quadVAO)
+    glGenBuffers(1, quadVBO.addr)
+    glBindBuffer(GL_ARRAY_BUFFER, quadVBO)
+
+    var hw = 1.0'f
+    var hh = 1.0'f
+
+    var vertices = [
+      -hw,  hh, 0'f, 0'f,
+       hw,  hh, 1'f, 0'f,
+      -hw, -hh, 0'f, 1'f,
+       hw, -hh, 1'f, 1'f,
+    ]
+
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float32) * vertices.len, vertices[0].addr, GL_STATIC_DRAW)
+    glVertexAttribPointer(0.GLuint, 4.GLint, cGL_FLOAT, false, (4 * sizeof(float32)).GLsizei, cast[pointer](0))
+    glEnableVertexAttribArray(0)
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+    glBindVertexArray(0)
+
+    if hwCanvas != 0:
+      glDeleteTextures(1, hwCanvas.addr)
+
+    glGenTextures(1, hwCanvas.addr)
+    glBindTexture(GL_TEXTURE_2D, hwCanvas)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA.GLint, screenWidth.GLsizei, screenHeight.GLsizei, 0, GL_RGBA, GL_UNSIGNED_BYTE, nil)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE.GLint)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE.GLint)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR.GLint)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR.GLint)
+
+    let crtID = glGetUniformLocation(shaderProgram, "useCRT")
+    if crtID != -1:
+      glUniform1i(crtID, useCRTFilter.int)
+
+    let canvasResID = glGetUniformLocation(shaderProgram, "canvasResolution")
+    if canvasResID != -1:
+      glUniform2f(canvasResID, screenWidth.float32, screenHeight.float32)
+    let displayResID = glGetUniformLocation(shaderProgram, "displayResolution")
+    if displayResID != -1:
+      glUniform2f(canvasResID, displayWidth.float32, displayHeight.float32)
+    let scaleID = glGetUniformLocation(shaderProgram, "scale")
+    if scaleID != -1:
+      glUniform2f(scaleID, screenScale.float32, screenScale.float32)
+    let timeID = glGetUniformLocation(shaderProgram, "time")
+    if timeID != -1:
+      glUniform1f(timeID, current_time.float32 / 1000)
+
 
 proc resize*(w,h: int) =
   debug "sdl resize display: ", w, h
@@ -364,6 +419,11 @@ proc resize*(w,h: int) =
     let scaleID = glGetUniformLocation(shaderProgram, "scale")
     if scaleID != -1:
       glUniform2f(scaleID, screenScale.float32, screenScale.float32)
+      
+    let timeID = glGetUniformLocation(shaderProgram, "time")
+    if timeID != -1:
+      glUniform1f(timeID, current_time.float32 / 1000)
+      
 
   else:
     hwCanvas = render.createTexture(PIXELFORMAT_RGBA8888, TEXTUREACCESS_STREAMING, screenWidth, screenHeight)
@@ -1153,6 +1213,7 @@ proc queuedAudioSize*(): int =
   return getQueuedAudioSize(audioDeviceId).int div sizeof(float32)
 
 proc step*() {.cdecl.} =
+  updateShader()
   checkInput()
 
   next_time = getTicks()
@@ -1161,6 +1222,7 @@ proc step*() {.cdecl.} =
     diff = timeStep
   acc += diff
   current_time = next_time
+
 
   while acc > timeStep:
     when defined(profile):
